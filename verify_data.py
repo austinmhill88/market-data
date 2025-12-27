@@ -109,21 +109,21 @@ def verify_data(filepath: Path):
     
     # Check 8: Open in [low, high]
     checks_total += 1
-    if ((df['open'] >= df['low']) & (df['open'] <= df['high'])).all():
+    violations_open = ~((df['open'] >= df['low']) & (df['open'] <= df['high']))
+    if not violations_open.any():
         print("✓ open in [low, high] for all bars")
         checks_passed += 1
     else:
-        violations = ~((df['open'] >= df['low']) & (df['open'] <= df['high']))
-        print(f"✗ Found {violations.sum()} bars where open not in [low, high]")
+        print(f"✗ Found {violations_open.sum()} bars where open not in [low, high]")
     
     # Check 9: Close in [low, high]
     checks_total += 1
-    if ((df['close'] >= df['low']) & (df['close'] <= df['high'])).all():
+    violations_close = ~((df['close'] >= df['low']) & (df['close'] <= df['high']))
+    if not violations_close.any():
         print("✓ close in [low, high] for all bars")
         checks_passed += 1
     else:
-        violations = ~((df['close'] >= df['low']) & (df['close'] <= df['high']))
-        print(f"✗ Found {violations.sum()} bars where close not in [low, high]")
+        print(f"✗ Found {violations_close.sum()} bars where close not in [low, high]")
     
     # Check 10: Positive prices
     checks_total += 1

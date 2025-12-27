@@ -36,9 +36,13 @@ class MarketDataGenerator:
         "1Day": 390  # NYSE regular hours: 6.5 hours = 390 minutes
     }
     
+    # Scaling factors for price generation
+    GAP_SCALE_FACTOR = 0.01  # 1% scaling for overnight gaps
+    RANGE_SCALE_FACTOR = 0.02  # 2% scaling for intrabar range
+    
     # NYSE regular trading hours (09:30 - 16:00 EST)
-    MARKET_OPEN = datetime.time(13, 30)  # UTC time (EST + 5 hours)
-    MARKET_CLOSE = datetime.time(21, 0)  # UTC time (EST + 5 hours)
+    MARKET_OPEN = datetime.time(14, 30)  # UTC time (EST is UTC-5, so 09:30 EST = 14:30 UTC)
+    MARKET_CLOSE = datetime.time(21, 0)  # UTC time (16:00 EST = 21:00 UTC)
     
     def __init__(self, seed: Optional[int] = None):
         """
@@ -158,7 +162,7 @@ class MarketDataGenerator:
         
         Args:
             close_prices: Array of close prices
-            volatility: Volatility parameter for intrabar movement
+            volatility: Annualized volatility (0.0-1.0, e.g., 0.20 for 20%)
             
         Returns:
             Tuple of (open, high, low, close) arrays
@@ -171,7 +175,7 @@ class MarketDataGenerator:
         
         for i in range(1, n_bars):
             # Open is close of previous bar with small gap
-            gap = self.rng.normal(0, volatility * close_prices[i-1] * 0.01)
+            gap = self.rng.normal(0, volatility * close_prices[i-1] * self.GAP_SCALE_FACTOR)
             open_prices[i] = close_prices[i-1] + gap
         
         # Generate high and low with realistic intrabar movement
@@ -180,7 +184,7 @@ class MarketDataGenerator:
         
         for i in range(n_bars):
             # Determine range based on volatility
-            range_pct = abs(self.rng.normal(0, volatility * 0.02))
+            range_pct = abs(self.rng.normal(0, volatility * self.RANGE_SCALE_FACTOR))
             bar_range = close_prices[i] * range_pct
             
             # High and low should encompass open and close
@@ -330,10 +334,10 @@ class MarketDataGenerator:
             start_date: Start date for data generation
             end_date: End date for data generation
             timeframe: Timeframe (1Min, 5Min, 15Min, 1Hour, 1Day)
-            start_price: Starting price (randomized if None)
-            volatility: Annualized volatility (randomized if None)
-            drift: Annualized drift/return (randomized if None)
-            avg_volume: Average volume per bar (randomized if None)
+            start_price: Starting price in dollars (randomized if None)
+            volatility: Annualized volatility (0.0-1.0, e.g., 0.20 for 20%, randomized if None)
+            drift: Annualized expected return (-1.0 to 1.0, e.g., 0.08 for 8%, randomized if None)
+            avg_volume: Average volume per bar in shares (randomized if None)
             include_vwap: Include VWAP column
             include_trade_count: Include trade_count column
             
@@ -403,9 +407,11 @@ class MarketDataGenerator:
         
         # Add optional columns
         if include_vwap:
-            # VWAP is typically close to the average of high, low, close
-            # with volume weighting approximated
-            data['vwap'] = (high_prices + low_prices + close_prices) / 3.0
+            # VWAP (Volume Weighted Average Price) = sum(price * volume) / sum(volume)
+            # For simplification, we approximate VWAP as volume-weighted typical price
+            typical_prices = (high_prices + low_prices + close_prices) / 3.0
+            # In reality, VWAP would need tick-by-tick data; this is a bar-level approximation
+            data['vwap'] = typical_prices
         
         if include_trade_count:
             # Trade count roughly proportional to volume
