@@ -10,6 +10,7 @@ import argparse
 import datetime
 import numpy as np
 import pandas as pd
+import pandas_market_calendars as mcal
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 import sys
@@ -36,16 +37,14 @@ class MarketDataGenerator:
         "5Min": 5,
         "15Min": 15,
         "1Hour": 60,
-        "1Day": 390  # NYSE regular hours: 6.5 hours = 390 minutes
+        "1Day": 390  # Note: For daily bars, this value is not used for time calculations.
+                     # Daily logic branches separately to use business days.
+                     # This value (390 = 6.5 hours in minutes) is kept for reference only.
     }
     
     # Scaling factors for price generation
     GAP_SCALE_FACTOR = 0.01  # 1% scaling for overnight gaps
     RANGE_SCALE_FACTOR = 0.02  # 2% scaling for intrabar range
-    
-    # NYSE regular trading hours (09:30 - 16:00 EST)
-    MARKET_OPEN = datetime.time(14, 30)  # UTC time (EST is UTC-5, so 09:30 EST = 14:30 UTC)
-    MARKET_CLOSE = datetime.time(21, 0)  # UTC time (16:00 EST = 21:00 UTC)
     
     def __init__(self, seed: Optional[int] = None):
         """
@@ -59,6 +58,10 @@ class MarketDataGenerator:
             seed = int(datetime.datetime.now().timestamp() * 1000000) % (2**32)
         
         self.rng = np.random.default_rng(seed)
+        
+        # Initialize NYSE market calendar for proper DST and holiday handling
+        self.nyse_cal = mcal.get_calendar('XNYS')
+        
         print(f"Initialized generator with seed: {seed}")
     
     def _generate_trading_timestamps(
@@ -69,6 +72,7 @@ class MarketDataGenerator:
     ) -> pd.DatetimeIndex:
         """
         Generate valid trading timestamps for the given timeframe.
+        Uses pandas_market_calendars to properly handle DST and holidays.
         
         Args:
             start_date: Start date for data generation
@@ -79,45 +83,30 @@ class MarketDataGenerator:
             DatetimeIndex with valid trading timestamps in UTC
         """
         if timeframe == "1Day":
-            # Generate daily bars (one per business day)
-            dates = pd.bdate_range(start=start_date, end=end_date, freq='B')
-            # Set to midnight UTC
+            # Generate daily bars (one per valid trading day)
+            # Use market calendar to respect holidays
+            schedule = self.nyse_cal.schedule(start_date=start_date, end_date=end_date)
+            # Use market open times and convert to midnight UTC for daily bars
+            dates = schedule.index.date
             return pd.DatetimeIndex([pd.Timestamp(d, tz='UTC') for d in dates])
         
-        # Generate intraday timestamps
-        timestamps = []
-        current_date = start_date
+        # Generate intraday timestamps using market calendar
+        # This automatically handles DST transitions and holidays
+        schedule = self.nyse_cal.schedule(start_date=start_date, end_date=end_date)
         
-        while current_date <= end_date:
-            # Skip weekends
-            if current_date.weekday() < 5:  # Monday = 0, Friday = 4
-                # Generate timestamps for this trading day
-                day_start = pd.Timestamp(
-                    year=current_date.year,
-                    month=current_date.month,
-                    day=current_date.day,
-                    hour=self.MARKET_OPEN.hour,
-                    minute=self.MARKET_OPEN.minute,
-                    tz='UTC'
-                )
-                day_end = pd.Timestamp(
-                    year=current_date.year,
-                    month=current_date.month,
-                    day=current_date.day,
-                    hour=self.MARKET_CLOSE.hour,
-                    minute=self.MARKET_CLOSE.minute,
-                    tz='UTC'
-                )
-                
-                # Generate bars for this day
-                minutes = self.TIMEFRAMES[timeframe]
-                current_ts = day_start
-                
-                while current_ts < day_end:
-                    timestamps.append(current_ts)
-                    current_ts += pd.Timedelta(minutes=minutes)
+        timestamps = []
+        minutes = self.TIMEFRAMES[timeframe]
+        
+        for idx, row in schedule.iterrows():
+            market_open = row['market_open']
+            market_close = row['market_close']
             
-            current_date += datetime.timedelta(days=1)
+            # Generate bars for this trading day
+            current_ts = market_open
+            
+            while current_ts < market_close:
+                timestamps.append(current_ts)
+                current_ts += pd.Timedelta(minutes=minutes)
         
         return pd.DatetimeIndex(timestamps)
     
@@ -353,7 +342,7 @@ class MarketDataGenerator:
         if not (df['close'] > 0).all():
             errors.append("close <= 0 for some bars")
         
-        # Check volume is integer and >= 0
+        # Check volume is integer type and >= 0
         if df['volume'].dtype not in [np.int32, np.int64]:
             errors.append("volume is not integer type")
         
@@ -362,12 +351,21 @@ class MarketDataGenerator:
         
         # Check optional columns if present
         if 'vwap' in df.columns:
+            # Check vwap is finite
             if not np.isfinite(df['vwap']).all():
                 errors.append("vwap contains NaN or Inf values")
+            # Check vwap >= 0
+            if not (df['vwap'] >= 0).all():
+                errors.append("vwap < 0 for some bars")
+            # Check vwap is within [low, high]
             if not ((df['vwap'] >= df['low']) & (df['vwap'] <= df['high'])).all():
                 errors.append("vwap not in [low, high] for some bars")
         
         if 'trade_count' in df.columns:
+            # Check trade_count is integer type
+            if df['trade_count'].dtype not in [np.int32, np.int64]:
+                errors.append("trade_count is not integer type")
+            # Check trade_count >= 0
             if not (df['trade_count'] >= 0).all():
                 errors.append("trade_count < 0 for some bars")
         

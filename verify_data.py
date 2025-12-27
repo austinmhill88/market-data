@@ -4,6 +4,7 @@ Verify generated market data meets all specifications.
 """
 
 import pandas as pd
+import numpy as np
 import sys
 from pathlib import Path
 
@@ -152,19 +153,34 @@ def verify_data(filepath: Path):
     # Check optional columns
     if 'vwap' in df.columns:
         checks_total += 1
-        if ((df['vwap'] >= df['low']) & (df['vwap'] <= df['high'])).all():
-            print("✓ vwap in [low, high] for all bars")
-            checks_passed += 1
-        else:
+        if not (df['vwap'] >= 0).all():
+            print("✗ vwap < 0 for some bars")
+        elif not np.isfinite(df['vwap']).all():
+            print("✗ vwap contains non-finite values")
+        elif not ((df['vwap'] >= df['low']) & (df['vwap'] <= df['high'])).all():
             print("✗ vwap not in [low, high] for some bars")
+        else:
+            print("✓ vwap >= 0, finite, and in [low, high] for all bars")
+            checks_passed += 1
     
     if 'trade_count' in df.columns:
         checks_total += 1
-        if (df['trade_count'] >= 0).all():
-            print("✓ trade_count >= 0 for all bars")
-            checks_passed += 1
-        else:
+        # Check integer type
+        if not pd.api.types.is_integer_dtype(df['trade_count']):
+            print("✗ trade_count is not integer type")
+        elif not (df['trade_count'] >= 0).all():
             print("✗ trade_count < 0 for some bars")
+        else:
+            print("✓ trade_count is integer type and >= 0 for all bars")
+            checks_passed += 1
+    
+    # Check volume integer type
+    checks_total += 1
+    if not pd.api.types.is_integer_dtype(df['volume']):
+        print("✗ volume is not integer type")
+    else:
+        print("✓ volume is integer type")
+        checks_passed += 1
     
     # Summary
     print("\n" + "="*60)
