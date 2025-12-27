@@ -1,0 +1,106 @@
+Scope
+
+Bar data for symbols at fixed timeframes (1Min and 1Day).
+Optional quote-derived values (last, prev_close) for simple price summaries.
+File/storage and timestamp conventions so the data can be read reliably.
+Validation rules to ensure data won’t break indicator calculations.
+Timeframes and calendars
+
+Supported timeframes: "1Min", "5Min", "15Min", "1Hour", "1Day".
+1Min session: NYSE regular hours only (09:30–16:00 local). Weekdays only; no weekends.
+1Day session: one bar per business day (no weekends).
+Timestamps must be in UTC and monotonic increasing for each symbol/timeframe.
+Bar data schema (per symbol)
+
+Index: ts as pandas DateTimeIndex (UTC), sorted ascending, no duplicates.
+Columns (required):
+symbol: string (uppercase ticker, e.g., "AAPL")
+open: float > 0
+high: float ≥ low
+low: float > 0
+close: float > 0 and low ≤ close ≤ high
+volume: integer ≥ 0
+Columns (optional but accepted):
+vwap: float ≥ 0 (if present, should be between low and high)
+trade_count: integer ≥ 0
+Per-bar consistency:
+high ≥ low
+open ∈ [low, high]
+close ∈ [low, high]
+All numeric fields must be finite (no NaN, no Inf).
+Timestamp formatting when requesting/producing data
+
+Intraday ("1Min", "5Min", etc.): RFC3339 UTC strings for request boundaries, e.g., "YYYY-MM-DDTHH:MM:SSZ".
+Daily ("1Day"): date-only strings for request boundaries, e.g., "YYYY-MM-DD".
+Internally stored/consumed: pandas DateTimeIndex in UTC; do not mix timezones.
+Minimum history requirements
+
+For intraday strategy warmup and indicators:
+EMA slow and base minimum: at least 50 bars; recommended ≥ 60 trading days of 1Min data for robust features.
+ATR, ADX windows: at least 20 valid bars before signals can be generated.
+For swing strategy warmup and training:
+Recommended: ≥ 60 daily bars; ideal: 1–3 years of "1Day" data for model training/backtests.
+Ensure the last window needed by indicators (EMA/ATR/ADX) has no NaNs or zero ATR.
+Cadence and gaps
+
+No missing bars within a session cadence (1-minute or daily). If gaps occur:
+For intraday, skip signal generation until a full valid indicator window is present again.
+Do not forward-fill prices; instead, drop gaps or regenerate bars to maintain valid indicator inputs.
+No duplicate timestamps. If duplicates occur, deduplicate by keeping the first valid record.
+Price ranges and sanity
+
+price scale must match real-world ranges for the symbol (avoid penny-scale for large caps).
+Avoid degenerate bars (high == low == open == close) except in rare edge cases; sporadic flat bars are acceptable but not common.
+Volume rules
+
+volume must be an integer ≥ 0.
+Intraday volume should reflect session seasonality (higher near open/close if simulated), but the app does not require seasonality—only the type and bounds.
+File/storage conventions (if reading from local files)
+
+Per symbol, per timeframe Parquet files are acceptable:
+Path: data/parquet/{SYMBOL}/{TIMEFRAME}.parquet
+Schema must match the Bar data schema above.
+If loading from CSV:
+Must contain a "ts" column parsable to pandas datetime and set as the index.
+Columns must match schema; types must be correct; sorted ascending.
+Last and previous close (for simple price summaries)
+
+last (float): use the latest close for the symbol/timeframe or the latest trade price from the data source.
+prev_close (float): previous day’s close from the last two daily bars for the symbol.
+Derived values:
+change = last − prev_close
+change_pct = ((last / prev_close) − 1) × 100 if prev_close > 0 else 0
+All derived values must be finite; default to 0 when prev_close is missing.
+Validation checklist (must pass before feeding data)
+
+Index is DateTimeIndex (UTC), sorted, no duplicates.
+Columns include: open, high, low, close, volume (required).
+All numeric values are finite (no NaN/Inf).
+Bounds: high ≥ low; open ∈ [low, high]; close ∈ [low, high].
+volume is integer and ≥ 0.
+Minimum indicator window present (≥ 50 bars for EMA, ≥ 20 for ATR/ADX) before signals can be generated.
+Examples (schema only; not code)
+
+1Min bar (row):
+ts: 2025-12-26T14:03:00Z
+symbol: "AMZN"
+open: 231.12
+high: 231.80
+low: 230.50
+close: 231.32
+volume: 123456
+vwap: 231.20
+trade_count: 789
+1Day bar (row):
+ts: 2025-12-24T00:00:00Z
+symbol: "SPY"
+open: 690.10
+high: 695.00
+low: 688.50
+close: 692.80
+volume: 75600000
+Acceptance criteria for market data
+
+The app can compute EMA(20/50), ATR(14–20), and ADX(14) without encountering NaN/Inf in the necessary lookbacks.
+The strategies do not log “Invalid price” or “ATR ≤ 0” errors for the latest bar.
+Price summaries (last, change, change_pct) are finite and correctly derived.
