@@ -28,6 +28,12 @@ cd market-data
 pip install -r requirements.txt
 ```
 
+**Dependencies:**
+- `pandas>=2.0.0` - Core data structures
+- `numpy>=1.24.0` - Numerical operations
+- `pyarrow>=12.0.0` - Parquet file support
+- `pandas-market-calendars>=4.0.0` - NYSE market calendar with DST and holiday support
+
 ## Quick Start
 
 Generate 1 year of daily data for a single symbol:
@@ -118,11 +124,11 @@ The generated data conforms to all requirements in the `SPECS FOR SYNTHETIC MARK
 - `high`: Float ≥ low
 - `low`: Float > 0
 - `close`: Float > 0, low ≤ close ≤ high
-- `volume`: Integer ≥ 0
+- `volume`: Integer ≥ 0 (integer dtype enforced)
 
 **Optional Columns:**
-- `vwap`: Float ≥ 0, within [low, high]
-- `trade_count`: Integer ≥ 0
+- `vwap`: Float ≥ 0, within [low, high], finite (no NaN/Inf)
+- `trade_count`: Integer ≥ 0 (integer dtype enforced)
 
 ### Validation Rules
 
@@ -132,13 +138,21 @@ All generated data is validated to ensure:
 - ✅ All numeric values are finite (no NaN/Inf)
 - ✅ OHLC consistency: high ≥ low, open/close within [low, high]
 - ✅ All prices are positive
-- ✅ Volume is non-negative integer
+- ✅ Volume is non-negative integer with enforced integer dtype
+- ✅ Optional VWAP: finite, ≥ 0, and within [low, high]
+- ✅ Optional trade_count: integer dtype, ≥ 0
 - ✅ Minimum 50 bars for indicator calculations
 
 ### Trading Calendar
 
-- **Intraday data** (1Min, 5Min, 15Min, 1Hour): NYSE regular hours only (09:30-16:00 EST)
-- **Daily data** (1Day): One bar per business day (weekdays only)
+The generator uses **pandas_market_calendars** with the NYSE calendar ("XNYS") to automatically handle:
+
+- **DST-aware market hours**: Properly handles Daylight Saving Time transitions
+  - During EST (Nov-Mar): 09:30-16:00 EST = 14:30-21:00 UTC
+  - During EDT (Mar-Nov): 09:30-16:00 EDT = 13:30-20:00 UTC
+- **Holiday exclusion**: Automatically excludes NYSE market holidays (New Year's Day, Independence Day, Thanksgiving, Christmas, etc.)
+- **Intraday data** (1Min, 5Min, 15Min, 1Hour): NYSE regular hours only (09:30-16:00 local time)
+- **Daily data** (1Day): One bar per valid trading day (excludes weekends and holidays)
 - **Timezone**: All timestamps in UTC
 
 ## Randomization Strategy
