@@ -4,6 +4,7 @@ Verify generated market data meets all specifications.
 """
 
 import pandas as pd
+import numpy as np
 import sys
 from pathlib import Path
 
@@ -154,7 +155,7 @@ def verify_data(filepath: Path):
         checks_total += 1
         if not (df['vwap'] >= 0).all():
             print("✗ vwap < 0 for some bars")
-        elif not pd.api.types.is_numeric_dtype(df['vwap']) or not df['vwap'].apply(lambda x: pd.notnull(x) and pd.api.types.is_number(x)).all():
+        elif not np.isfinite(df['vwap']).all():
             print("✗ vwap contains non-finite values")
         elif not ((df['vwap'] >= df['low']) & (df['vwap'] <= df['high'])).all():
             print("✗ vwap not in [low, high] for some bars")
