@@ -6,10 +6,11 @@ A Python application for generating realistic synthetic market data for backtest
 
 - ✅ **Randomized Data Generation**: Each run produces different, non-predictable data using randomized parameters
 - ✅ **Multiple Timeframes**: Support for 1Min, 5Min, 15Min, 1Hour, and 1Day bars
-- ✅ **Realistic Price Movement**: Uses geometric Brownian motion for natural-looking price walks
+- ✅ **Realistic Price Movement**: Uses geometric Brownian motion with regime switching and volatility clustering for natural-looking price walks
 - ✅ **NYSE Trading Hours**: Respects market hours (09:30-16:00 EST) for intraday data
 - ✅ **Business Days Only**: Excludes weekends and generates only valid trading days
-- ✅ **Full Validation**: Ensures all data meets specifications before output
+- ✅ **Full Validation**: Ensures all data meets specifications before output with fail-fast validation
+- ✅ **UTC Timestamps**: All timestamps explicitly stored as UTC with DateTimeIndex
 - ✅ **Multiple Export Formats**: Supports both Parquet and CSV export
 - ✅ **Configurable Parameters**: Customize starting price, volatility, drift, and volume
 - ✅ **Optional Columns**: Include VWAP and trade count data
@@ -151,9 +152,19 @@ The generator ensures non-predictable data through:
    - Drift: -10% to +20% annualized
    - Volume: Price-dependent ranges
 3. **Geometric Brownian Motion**: Natural price evolution with random walk
-4. **Stochastic Volume**: Log-normal distribution for realistic volume patterns
+4. **Regime Switching**: Volatility switches between low, medium, and high volatility regimes to simulate market conditions (calm, normal, stressed)
+5. **Volatility Clustering**: GARCH-like volatility clustering where periods of high volatility tend to cluster together, creating realistic market behavior
+6. **Stochastic Volume**: Log-normal distribution for realistic volume patterns
 
 ## Output Structure
+
+The generator follows a consistent file convention for organizing market data:
+
+### File Convention
+
+**Standard path format:** `data/parquet/{SYMBOL}/{TIMEFRAME}.parquet`
+
+This is the expected format for local file feeds and ensures consistent data organization across the application.
 
 ### Parquet Format (Default)
 ```
@@ -161,12 +172,19 @@ data/
 └── parquet/
     ├── AAPL/
     │   ├── 1Min.parquet
+    │   ├── 5Min.parquet
+    │   ├── 1Hour.parquet
     │   ├── 1Day.parquet
     │   └── ...
     ├── MSFT/
     │   └── 1Day.parquet
     └── ...
 ```
+
+**Example paths:**
+- `data/parquet/AAPL/1Day.parquet` - Daily data for AAPL
+- `data/parquet/SPY/1Min.parquet` - 1-minute intraday data for SPY
+- `data/parquet/MSFT/1Hour.parquet` - Hourly data for MSFT
 
 ### CSV Format
 ```
@@ -176,6 +194,8 @@ data/
     │   └── 1Day.csv
     └── ...
 ```
+
+**Note:** All timestamps in output files are stored in UTC timezone with the index as a DateTimeIndex. This ensures compatibility with pandas and consistent time handling across different systems.
 
 ## Example Output
 

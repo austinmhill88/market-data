@@ -21,10 +21,13 @@ class MarketDataGenerator:
     
     Features:
     - Randomized price movements using geometric Brownian motion
+    - Regime switching and volatility clustering for realistic market behavior
     - Configurable volatility and drift
     - Multiple timeframe support (1Min, 5Min, 15Min, 1Hour, 1Day)
-    - NYSE trading hours for intraday data
-    - Business days only
+    - NYSE trading hours for intraday data (09:30-16:00 EST)
+    - Business days only (no weekends)
+    - UTC timestamps with DateTimeIndex
+    - Fail-fast validation before saving
     - Full validation per specs
     """
     
@@ -118,6 +121,62 @@ class MarketDataGenerator:
         
         return pd.DatetimeIndex(timestamps)
     
+    def _generate_volatility_regimes(
+        self,
+        n_bars: int,
+        base_volatility: float
+    ) -> np.ndarray:
+        """
+        Generate volatility with regime switching for realistic market behavior.
+        
+        Implements a simple regime-switching model with low, medium, and high volatility states.
+        
+        Args:
+            n_bars: Number of bars to generate
+            base_volatility: Base volatility parameter (annualized)
+            
+        Returns:
+            Array of volatilities for each bar
+        """
+        # Define volatility regimes (multipliers of base volatility)
+        regimes = {
+            'low': 0.6,      # Calm market
+            'medium': 1.0,   # Normal market
+            'high': 1.8      # Stressed market
+        }
+        
+        # Transition probabilities for regime persistence
+        # Higher values = more persistent regimes = more clustering
+        regime_persistence = 0.95
+        
+        # Initialize regime sequence
+        regime_sequence = np.zeros(n_bars)
+        current_regime = 'medium'  # Start in medium volatility
+        
+        for i in range(n_bars):
+            # Decide if regime changes
+            if self.rng.random() > regime_persistence:
+                # Change regime with weighted probabilities
+                # Favor medium regime, but allow transitions to extremes
+                regime_probs = [0.15, 0.7, 0.15]  # low, medium, high
+                current_regime = self.rng.choice(list(regimes.keys()), p=regime_probs)
+            
+            regime_sequence[i] = regimes[current_regime]
+        
+        # Apply volatility clustering using GARCH-like effect
+        # Recent volatility influences current volatility
+        volatilities = np.zeros(n_bars)
+        volatilities[0] = base_volatility * regime_sequence[0]
+        
+        for i in range(1, n_bars):
+            # GARCH(1,1)-inspired: current vol = weighted avg of regime vol and recent vol
+            # This creates volatility clustering
+            alpha = 0.15  # Weight on recent volatility (clustering effect)
+            volatilities[i] = (alpha * volatilities[i-1] + 
+                              (1 - alpha) * base_volatility * regime_sequence[i])
+        
+        return volatilities
+    
     def _generate_price_series(
         self,
         n_bars: int,
@@ -126,12 +185,13 @@ class MarketDataGenerator:
         drift: float
     ) -> np.ndarray:
         """
-        Generate a price series using geometric Brownian motion.
+        Generate a price series using geometric Brownian motion with regime switching
+        and volatility clustering.
         
         Args:
             n_bars: Number of bars to generate
             start_price: Starting price
-            volatility: Volatility parameter (annualized)
+            volatility: Base volatility parameter (annualized)
             drift: Drift parameter (annualized return)
             
         Returns:
@@ -140,12 +200,16 @@ class MarketDataGenerator:
         # Geometric Brownian Motion: dS = μS dt + σS dW
         dt = 1.0 / 252  # Daily time step (252 trading days per year)
         
-        # Generate random returns
-        returns = self.rng.normal(
-            drift * dt,
-            volatility * np.sqrt(dt),
-            n_bars
-        )
+        # Generate time-varying volatility with regimes and clustering
+        volatilities = self._generate_volatility_regimes(n_bars, volatility)
+        
+        # Generate random returns with time-varying volatility
+        returns = np.zeros(n_bars)
+        for i in range(n_bars):
+            returns[i] = self.rng.normal(
+                drift * dt,
+                volatilities[i] * np.sqrt(dt)
+            )
         
         # Convert to prices
         price_series = start_price * np.exp(np.cumsum(returns))
@@ -435,6 +499,24 @@ class MarketDataGenerator:
         
         return df
     
+    def _validate_before_save(self, df: pd.DataFrame):
+        """
+        Validate data before saving. Fail fast on violations.
+        
+        Args:
+            df: DataFrame to validate
+            
+        Raises:
+            ValueError: If validation fails with detailed error message
+        """
+        is_valid, errors = self._validate_dataframe(df)
+        
+        if not is_valid:
+            error_msg = "Data validation failed before save:\n"
+            for error in errors:
+                error_msg += f"  - {error}\n"
+            raise ValueError(error_msg)
+    
     def save_to_parquet(
         self,
         df: pd.DataFrame,
@@ -450,7 +532,23 @@ class MarketDataGenerator:
             output_dir: Base output directory
             symbol: Stock symbol
             timeframe: Timeframe string
+            
+        Raises:
+            ValueError: If data fails validation before save
         """
+        # Validate before saving - fail fast on violations
+        self._validate_before_save(df)
+        
+        # Explicitly ensure index is UTC DateTimeIndex before saving
+        if not isinstance(df.index, pd.DatetimeIndex):
+            raise ValueError("Index must be DateTimeIndex before saving")
+        if df.index.tz is None:
+            # Convert to UTC if no timezone
+            df.index = df.index.tz_localize('UTC')
+        elif str(df.index.tz) != 'UTC':
+            # Convert to UTC if different timezone
+            df.index = df.index.tz_convert('UTC')
+        
         # Create directory structure: data/parquet/{SYMBOL}/{TIMEFRAME}.parquet
         symbol_dir = output_dir / "parquet" / symbol.upper()
         symbol_dir.mkdir(parents=True, exist_ok=True)
@@ -475,7 +573,23 @@ class MarketDataGenerator:
             output_dir: Base output directory
             symbol: Stock symbol
             timeframe: Timeframe string
+            
+        Raises:
+            ValueError: If data fails validation before save
         """
+        # Validate before saving - fail fast on violations
+        self._validate_before_save(df)
+        
+        # Explicitly ensure index is UTC DateTimeIndex before saving
+        if not isinstance(df.index, pd.DatetimeIndex):
+            raise ValueError("Index must be DateTimeIndex before saving")
+        if df.index.tz is None:
+            # Convert to UTC if no timezone
+            df.index = df.index.tz_localize('UTC')
+        elif str(df.index.tz) != 'UTC':
+            # Convert to UTC if different timezone
+            df.index = df.index.tz_convert('UTC')
+        
         # Create directory structure: data/csv/{SYMBOL}/{TIMEFRAME}.csv
         symbol_dir = output_dir / "csv" / symbol.upper()
         symbol_dir.mkdir(parents=True, exist_ok=True)
